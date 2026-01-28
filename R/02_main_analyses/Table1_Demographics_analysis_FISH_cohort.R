@@ -20,9 +20,16 @@ safe_max <- function(x) {
   max(x, na.rm = TRUE)
 }
 
+valid_donors <- cnv_data %>%
+  dplyr::filter(!is.na(Total_cells)) %>%
+  dplyr::distinct(Donor_ID)
+
+case_info_analysis <- case_info %>%
+  dplyr::semi_join(valid_donors, by = "Donor_ID")
+
 
 # Main demographics summary table
-demographics_summary_table <- case_info %>%
+demographics_summary_table <- case_info_analysis %>%
   dplyr::mutate(Sex = toupper(Sex)) %>%
   dplyr::group_by(Classification) %>%
   dplyr::summarise(
@@ -131,25 +138,25 @@ readr::write_tsv(
   na = ""
 )
 
-# 1. Subset OPCA and SND from averaged CNV dataset
+# Subset OPCA and SND from averaged CNV dataset
 avg_msa_subset <- avg_cnv_data_msa_only %>%
   dplyr::filter(Classification %in% c("OPCA", "SND"))
 
-# 2. Student t-test for Age_of_onset
+# Student t-test for Age_of_onset
 t_age_onset <- stats::t.test(
   Age_of_onset ~ Classification,
   data = avg_msa_subset,
   var.equal = TRUE
 )
 
-# 3. Student t-test for Disease_duration
+# Student t-test for Disease_duration
 t_disease_duration <- stats::t.test(
   Disease_duration ~ Classification,
   data = avg_msa_subset,
   var.equal = FALSE
 )
 
-# 4. Summary table for both variables
+# Summary table for both variables
 summary_duration_onset <- avg_msa_subset %>%
   dplyr::group_by(Classification) %>%
   dplyr::summarise(
@@ -174,7 +181,7 @@ readr::write_tsv(
   na = ""
 )
 
-# 5. Save t-test results as text files
+# Save t-test results as text files
 sink(file.path(stats_demo_dir, "t_test_age_of_onset_OPCA_vs_SND.txt"))
 print(t_age_onset)
 sink()
@@ -183,8 +190,8 @@ sink(file.path(stats_demo_dir, "t_test_disease_duration_OPCA_vs_SND.txt"))
 print(t_disease_duration)
 sink()
 
-# 1. Build 3x2 contingency table (Classification x Sex)
-sex_table <- table(case_info$Classification, case_info$Sex)
+# Build 3x2 contingency table (Classification x Sex)
+sex_table <- table(case_info_analysis$Classification, case_info_analysis$Sex)
 
 # Save the contingency table
 readr::write_tsv(
@@ -193,11 +200,11 @@ readr::write_tsv(
   na = ""
 )
 
-# 2. Check expected counts for chi square assumption
+# Check expected counts for chi square assumption
 chisq_test_raw <- stats::chisq.test(sex_table, correct = FALSE)
 expected_counts <- chisq_test_raw$expected
 
-# 3. Decide whether to use chi square or Fisher
+# Decide whether to use chi square or Fisher
 if (any(expected_counts < 5)) {
   test_used <- "Fisher_exact_test"
   test_result <- stats::fisher.test(sex_table)
@@ -206,7 +213,7 @@ if (any(expected_counts < 5)) {
   test_result <- chisq_test_raw
 }
 
-# 4. Convert the result into a readable table
+# Convert the result into a readable table
 sex_test_summary <- tibble::tibble(
   Test_used = test_used,
   Statistic = ifelse(test_used == "Chi_square_test", test_result$statistic, NA),
@@ -214,9 +221,74 @@ sex_test_summary <- tibble::tibble(
   p_value = test_result$p.value
 )
 
-# 5. Save statistical results
+# Save statistical results
 readr::write_tsv(
   sex_test_summary,
   file.path(stats_demo_dir, "sex_distribution_test_results.tsv"),
   na = ""
 )
+
+# Subset to groups of interest
+msa_control_subset <- case_info_analysis %>%
+  dplyr::filter(Classification %in% c("SND", "OPCA", "Control"))
+
+
+# Kruskal–Wallis test for PMI
+
+kw_pmi <- stats::kruskal.test(
+  PMI ~ Classification,
+  data = msa_control_subset
+)
+
+# PMI summary table
+pmi_summary <- msa_control_subset %>%
+  dplyr::group_by(Classification) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    median_PMI = stats::median(PMI, na.rm = TRUE),
+    iqr_low_PMI = stats::quantile(PMI, 0.25, na.rm = TRUE),
+    iqr_high_PMI = stats::quantile(PMI, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+readr::write_tsv(
+  pmi_summary,
+  file.path(stats_demo_dir, "stats_PMI_SND_OPCA_Control_summary.tsv"),
+  na = ""
+)
+
+sink(file.path(stats_demo_dir, "kruskal_wallis_PMI_SND_OPCA_Control.txt"))
+print(kw_pmi)
+sink()
+
+
+# One-way ANOVA for Age of death
+
+anova_age_death <- stats::aov(
+  Age_of_death ~ Classification,
+  data = msa_control_subset
+)
+
+# Age of death summary table
+age_death_summary <- msa_control_subset %>%
+  dplyr::group_by(Classification) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean_Age_of_death = mean(Age_of_death, na.rm = TRUE),
+    sd_Age_of_death = stats::sd(Age_of_death, na.rm = TRUE),
+    median_Age_of_death = stats::median(Age_of_death, na.rm = TRUE),
+    iqr_low_Age_of_death = stats::quantile(Age_of_death, 0.25, na.rm = TRUE),
+    iqr_high_Age_of_death = stats::quantile(Age_of_death, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+readr::write_tsv(
+  age_death_summary,
+  file.path(stats_demo_dir, "stats_Age_of_death_SND_OPCA_Control_summary.tsv"),
+  na = ""
+)
+
+sink(file.path(stats_demo_dir, "anova_Age_of_death_SND_OPCA_Control.txt"))
+summary(anova_age_death)
+sink()
+
